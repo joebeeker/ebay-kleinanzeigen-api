@@ -42,8 +42,33 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
     try:
         url = search_url.format(page=1)
         print(f"[inserate] Loading page 1: {url}")
-        await page.goto(url, timeout=120000)
-        await page.wait_for_load_state("networkidle")
+        await page.goto(url, timeout=60000)
+        print(f"[inserate] Page loaded, waiting for content...")
+
+        # Use domcontentloaded instead of networkidle (more reliable)
+        await page.wait_for_load_state("domcontentloaded")
+
+        # Handle cookie consent if present
+        try:
+            consent_button = await page.query_selector("#gdpr-banner-accept")
+            if consent_button:
+                print("[inserate] Accepting cookie consent...")
+                await consent_button.click()
+                await page.wait_for_timeout(1000)
+        except Exception as e:
+            print(f"[inserate] Cookie consent handling: {e}")
+
+        # Wait for ad items to appear
+        print("[inserate] Waiting for ad items...")
+        try:
+            await page.wait_for_selector(".ad-listitem", timeout=10000)
+        except Exception as e:
+            print(f"[inserate] No ad items found: {e}")
+            # Take screenshot for debugging
+            page_content = await page.content()
+            print(f"[inserate] Page title: {await page.title()}")
+            print(f"[inserate] Page content length: {len(page_content)}")
+
         results = []
 
         for i in range(page_count):
@@ -55,8 +80,9 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
                 try:
                     next_url = search_url.format(page=i+2)
                     print(f"[inserate] Loading page {i+2}: {next_url}")
-                    await page.goto(next_url, timeout=120000)
-                    await page.wait_for_load_state("networkidle")
+                    await page.goto(next_url, timeout=60000)
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_selector(".ad-listitem", timeout=10000)
                 except Exception as e:
                     print(f"[inserate] Failed to load page {i + 2}: {str(e)}")
                     break
@@ -64,6 +90,7 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
         print(f"[inserate] Total results: {len(results)}")
         return results
     except Exception as e:
+        print(f"[inserate] ERROR: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         await browser_manager.close_page(page)
