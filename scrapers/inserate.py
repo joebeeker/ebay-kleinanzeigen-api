@@ -40,20 +40,28 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
 
     page = await browser_manager.new_context_page()
     try:
-        await page.goto(search_url.format(page=1), timeout=120000)
+        url = search_url.format(page=1)
+        print(f"[inserate] Loading page 1: {url}")
+        await page.goto(url, timeout=120000)
+        await page.wait_for_load_state("networkidle")
         results = []
 
         for i in range(page_count):
             page_results = await get_ads(page)
+            print(f"[inserate] Page {i+1}: found {len(page_results)} ads")
             results.extend(page_results)
 
             if i < page_count - 1:
                 try:
-                    await page.goto(search_url.format(page=i+2), timeout=120000)
+                    next_url = search_url.format(page=i+2)
+                    print(f"[inserate] Loading page {i+2}: {next_url}")
+                    await page.goto(next_url, timeout=120000)
                     await page.wait_for_load_state("networkidle")
                 except Exception as e:
-                    print(f"Failed to load page {i + 2}: {str(e)}")
+                    print(f"[inserate] Failed to load page {i + 2}: {str(e)}")
                     break
+
+        print(f"[inserate] Total results: {len(results)}")
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
