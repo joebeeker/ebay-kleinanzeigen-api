@@ -109,11 +109,21 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
             print(f"[inserate] Page content length: {len(page_content)}")
 
         results = []
+        seen_adids = set()
 
         for i in range(page_count):
             page_results = await get_ads(page)
-            print(f"[inserate] Page {i+1}: found {len(page_results)} ads")
-            results.extend(page_results)
+            # Deduplicate: only add ads we haven't seen before
+            new_results = [r for r in page_results if r["adid"] not in seen_adids]
+            for r in new_results:
+                seen_adids.add(r["adid"])
+            print(f"[inserate] Page {i+1}: found {len(page_results)} ads, {len(new_results)} new")
+            results.extend(new_results)
+
+            # Stop early if no new results (we've exhausted all pages)
+            if len(new_results) == 0:
+                print(f"[inserate] No new results on page {i+1}, stopping pagination")
+                break
 
             if i < page_count - 1:
                 try:
@@ -126,7 +136,7 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
                     print(f"[inserate] Failed to load page {i + 2}: {str(e)}")
                     break
 
-        print(f"[inserate] Total results: {len(results)}")
+        print(f"[inserate] Total unique results: {len(results)}")
         return results
     except Exception as e:
         print(f"[inserate] ERROR: {str(e)}")
