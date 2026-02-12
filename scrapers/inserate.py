@@ -4,6 +4,12 @@ from fastapi import HTTPException
 
 from utils.browser import PlaywrightManager
 
+# Category ID mapping for Kleinanzeigen
+CATEGORY_IDS = {
+    "autoteile-reifen": 223,
+    "reifen-felgen": 233,
+}
+
 
 async def get_inserate_klaz(browser_manager: PlaywrightManager,
                             query: str = None,
@@ -11,36 +17,69 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
                             radius: int = None,
                             min_price: int = None,
                             max_price: int = None,
-                            page_count: int = 1):
+                            page_count: int = 1,
+                            category: str = None,
+                            commercial_only: bool = False):
     base_url = "https://www.kleinanzeigen.de"
+
+    # Build category path and suffix
+    category_path = ""
+    category_suffix = ""
+    if category and category in CATEGORY_IDS:
+        category_path = f"/s-{category}"
+        category_suffix = f"/k0c{CATEGORY_IDS[category]}"
+
+    # Build commercial filter path
+    commercial_path = "/anbieter:gewerblich" if commercial_only else ""
 
     # Build the price filter part of the path
     price_path = ""
     if min_price is not None or max_price is not None:
-        # Convert prices to strings; if one is None, leave its place empty
         min_price_str = str(min_price) if min_price is not None else ""
         max_price_str = str(max_price) if max_price is not None else ""
         price_path = f"/preis:{min_price_str}:{max_price_str}"
 
-    # Build the search path with price and page information
-    search_path = f"{price_path}/s-seite"
-    search_path += ":{page}"
-
-    # Build query parameters as before
-    params = {}
+    # Build search query path (hyphenated, goes before category suffix)
+    query_path = ""
     if query:
-        params['keywords'] = query
+        query_path = f"/{query.replace(' ', '-').lower()}"
+
+    # Build query parameters for location (still uses query params)
+    params = {}
     if location:
         params['locationStr'] = location
     if radius:
         params['radius'] = radius
 
-    # Construct the full URL and get it
-    search_url = base_url + search_path + ("?" + urlencode(params) if params else "")
+    # Construct the URL pattern based on whether category is used
+    if category and category in CATEGORY_IDS:
+        # Category-based URL: /s-{cat}/{commercial}/{page}/{price}/{query}/k0c{id}
+        # Order: category > commercial > seite:N > price > query > k0cID
+        # Note: page 1 omits /seite:1, subsequent pages use /seite:{page}
+        search_path = f"{category_path}{commercial_path}{{page_suffix}}{price_path}{query_path}{category_suffix}"
+    else:
+        # Legacy URL pattern (no category): {price}/s-seite:{page}?keywords=...
+        search_path = f"{price_path}/s-seite:{{page}}"
+        if query:
+            params['keywords'] = query
+
+    # Construct the full URL
+    search_url_template = base_url + search_path + ("?" + urlencode(params) if params else "")
+
+    # Helper to build URL for a specific page
+    use_category_pagination = category and category in CATEGORY_IDS
+    def build_url(page_num):
+        if use_category_pagination:
+            # Category URLs: page 1 has no suffix, page 2+ uses /seite:{n}/
+            page_suffix = "" if page_num == 1 else f"/seite:{page_num}"
+            return search_url_template.format(page_suffix=page_suffix)
+        else:
+            return search_url_template.format(page=page_num)
 
     page = await browser_manager.new_context_page()
     try:
-        url = search_url.format(page=1)
+        url = build_url(1)
+        print(f"[inserate] Category: {category}, Commercial only: {commercial_only}")
         print(f"[inserate] Loading page 1: {url}")
         await page.goto(url, timeout=60000)
         print(f"[inserate] Page loaded, waiting for content...")
@@ -78,7 +117,7 @@ async def get_inserate_klaz(browser_manager: PlaywrightManager,
 
             if i < page_count - 1:
                 try:
-                    next_url = search_url.format(page=i+2)
+                    next_url = build_url(i+2)
                     print(f"[inserate] Loading page {i+2}: {next_url}")
                     await page.goto(next_url, timeout=60000)
                     await page.wait_for_load_state("domcontentloaded")
